@@ -504,6 +504,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
           <div class="result-breakdown" id="r-breakdown"></div>
           <div id="r-domain-breakdown" style="margin:1.5rem 0"></div>
           <button class="btn-primary" onclick="restartQuiz()" style="margin-bottom:2rem"><i class="ti ti-refresh"></i> Try again</button>
+          <div id="r-mock-history"></div>
           <div id="r-question-review"></div>
         </div>
       </div>
@@ -692,6 +693,7 @@ const TRAILS = [
 
 /* ── Persistence ── */
 const STATS_KEY = 'agentforce_stats_v1';
+const MOCK_RESULTS_KEY = 'agentforce_mock_results_v1';
 function loadDone() {
   try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch { return {}; }
 }
@@ -700,6 +702,15 @@ function loadStats() {
   try { return JSON.parse(localStorage.getItem(STATS_KEY) || '{"answered":0,"correct":0}'); } catch { return {answered:0,correct:0}; }
 }
 function saveStats() { localStorage.setItem(STATS_KEY, JSON.stringify({answered: totalAnswered, correct: totalCorrect})); }
+function loadMockResults() {
+  try { return JSON.parse(localStorage.getItem(MOCK_RESULTS_KEY) || '[]'); } catch { return []; }
+}
+function saveMockResult(result) {
+  const all = loadMockResults();
+  all.unshift(result); // newest first
+  if (all.length > 50) all.length = 50; // cap at 50 attempts
+  localStorage.setItem(MOCK_RESULTS_KEY, JSON.stringify(all));
+}
 
 /* ── State ── */
 let done = loadDone();
@@ -2095,6 +2106,26 @@ function showResults() {
   const pct = Math.round((quizCorrect / total) * 100);
   const passed = pct >= 73;
 
+  /* ── Save mock result to localStorage ── */
+  if (quizMode === 'mock') {
+    const domainScores = {};
+    quizAnswers.forEach(({ q, isCorrect }) => {
+      if (!domainScores[q.domain]) domainScores[q.domain] = { correct: 0, total: 0 };
+      domainScores[q.domain].total++;
+      if (isCorrect) domainScores[q.domain].correct++;
+    });
+    saveMockResult({
+      mockNum: currentMockNumber,
+      date: new Date().toISOString(),
+      score: pct,
+      correct: quizCorrect,
+      total,
+      passed,
+      domains: domainScores
+    });
+    renderMockHistory();
+  }
+
   document.getElementById('r-score').textContent = pct + '%';
   document.getElementById('r-score').style.color = passed ? 'var(--green-mid)' : '#E24B4A';
 
@@ -2184,6 +2215,70 @@ function showResults() {
 }
 
 function restartQuiz() { quizCorrect = 0; quizAnswered = 0; quizAnswers = []; if (quizMode === 'mock') startMockTest(currentMockNumber, null); else startDayQuiz(currentDay, null); }
+
+function renderMockHistory() {
+  const el = document.getElementById('r-mock-history');
+  if (!el) return;
+  const all = loadMockResults();
+  if (!all.length) { el.innerHTML = ''; return; }
+
+  const MOCK_DOMAINS = ['AI Agents','Prompt Engineering','Data Cloud','Einstein Trust Layer','Model Builder'];
+  const fmt = iso => {
+    const d = new Date(iso);
+    return d.toLocaleDateString('en-GB', { day:'numeric', month:'short' }) + ' ' + d.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
+  };
+
+  let html = `<div style="margin:1.5rem 0 0.5rem;border-top:1px solid var(--border);padding-top:1.25rem">
+    <div style="font-size:0.9rem;font-weight:700;margin-bottom:1rem;display:flex;align-items:center;gap:8px">
+      <i class="ti ti-history" style="color:var(--purple-mid)"></i> Mock Test History
+      <span style="font-size:0.75rem;font-weight:400;color:var(--text3)">${all.length} attempt${all.length > 1 ? 's' : ''} saved</span>
+      <button onclick="clearMockHistory()" style="margin-left:auto;font-size:11px;padding:3px 10px;border:1px solid var(--border2);background:var(--surface);color:var(--text3);border-radius:6px;cursor:pointer">Clear history</button>
+    </div>`;
+
+  all.forEach((r, i) => {
+    const badge = r.passed
+      ? `<span style="background:var(--green-bg);color:var(--green-mid);padding:2px 8px;border-radius:10px;font-size:0.72rem;font-weight:700">PASS</span>`
+      : `<span style="background:#E24B4A22;color:#E24B4A;padding:2px 8px;border-radius:10px;font-size:0.72rem;font-weight:700">FAIL</span>`;
+    const scoreColor = r.score >= 85 ? 'var(--green-mid)' : r.score >= 73 ? 'var(--amber-mid)' : '#E24B4A';
+
+    const domainBars = MOCK_DOMAINS.map(d => {
+      const s = r.domains && r.domains[d];
+      if (!s || s.total === 0) return '';
+      const dpct = Math.round((s.correct / s.total) * 100);
+      const c = dpct >= 85 ? 'var(--green-mid)' : dpct >= 73 ? 'var(--amber-mid)' : '#E24B4A';
+      return `<div style="margin-bottom:4px">
+        <div style="display:flex;justify-content:space-between;font-size:0.72rem;margin-bottom:2px">
+          <span style="color:var(--text2)">${d}</span>
+          <span style="font-weight:600;color:${c}">${s.correct}/${s.total} — ${dpct}%</span>
+        </div>
+        <div style="height:5px;background:var(--border);border-radius:3px;overflow:hidden">
+          <div style="height:100%;width:${dpct}%;background:${c};border-radius:3px"></div>
+        </div>
+      </div>`;
+    }).join('');
+
+    html += `<div style="border:1px solid var(--border);border-radius:10px;padding:1rem;margin-bottom:0.75rem;background:var(--surface)${i === 0 ? ';border-color:var(--purple-mid);border-left:4px solid var(--purple-mid)' : ''}">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:0.75rem;flex-wrap:wrap">
+        <span style="font-size:0.82rem;font-weight:700;color:var(--purple-mid)">Mock ${r.mockNum}</span>
+        <span style="font-size:1.1rem;font-weight:800;color:${scoreColor}">${r.score}%</span>
+        <span style="font-size:0.78rem;color:var(--text3)">${r.correct}/${r.total} correct</span>
+        ${badge}
+        ${i === 0 ? '<span style="font-size:0.7rem;background:var(--purple-bg);color:var(--purple-mid);padding:1px 6px;border-radius:8px">Latest</span>' : ''}
+        <span style="margin-left:auto;font-size:0.72rem;color:var(--text3)">${fmt(r.date)}</span>
+      </div>
+      ${domainBars}
+    </div>`;
+  });
+
+  html += '</div>';
+  el.innerHTML = html;
+}
+
+function clearMockHistory() {
+  if (!confirm('Clear all mock test history?')) return;
+  localStorage.removeItem(MOCK_RESULTS_KEY);
+  renderMockHistory();
+}
 
 /* ── Flashcards ── */
 function setFCFilter(f, btn) {
